@@ -1,0 +1,93 @@
+server:
+  port: 8080
+
+spring:
+  profiles:
+    active: dev
+  application:
+    name: ticket-seckill-system
+
+  # 数据库初始化（启动时自动执行 schema.sql 建表和插入数据）
+  sql:
+    init:
+      mode: never
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:schema.sql
+
+  # 文件上传配置
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+  # 数据源（dev 环境配置在 application-dev.yml）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${SECKILL_DB_HOST:localhost}:${SECKILL_DB_PORT:3306}/${SECKILL_DB_NAME:seckill_ticket}?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${SECKILL_DB_USER:root}
+    password: ${SECKILL_DB_PASSWORD:gj050110}
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 600000
+      connection-timeout: 30000
+      max-lifetime: 1800000
+
+  # Redis 配置
+  data:
+    redis:
+      host: ${SECKILL_REDIS_HOST:localhost}
+      port: ${SECKILL_REDIS_PORT:6380}
+      password: ${SECKILL_REDIS_PASSWORD:}
+      database: 0
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 50
+          max-idle: 20
+          min-idle: 5
+          max-wait: 3000ms
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# RocketMQ 配置（5.x + spring-boot-starter）
+rocketmq:
+  name-server: ${SECKILL_ROCKETMQ_HOST:localhost:9876}
+  producer:
+    group: seckill-producer-group
+    send-message-timeout: 3000
+    retry-times-when-send-failed: 2
+    retry-times-when-send-async-failed: 2
+    compress-message-body-threshold: 4096
+    max-message-size: 4194304
+  consumer:
+    enabled: true
+
+# 秒杀业务配置
+seckill:
+  # 限流配置：每用户每分钟最多请求次数
+  rate-limit:
+    requests-per-minute: 5000 #10
+  # 订单支付超时时间（分钟）
+  order-timeout-minutes: 15
+  # MQ Topic（与代码中 SeckillProducer/Consumer 保持一致）
+  topic:
+    order: seckill-order-topic
+    delay: seckill-order-topic-delay
+
+# 日志配置
+logging:
+  level:
+    com.seckill: DEBUG
+    org.apache.rocketmq: INFO

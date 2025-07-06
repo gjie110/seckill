@@ -1,0 +1,16 @@
+target/
+node_modules/
+dist/
+.idea/
+*.iml
+.claude/
+uploads/
+*.log
+.DS_Store
+*.ps1
+*.cs
+*pressure-test*
+*test_*
+*.sql
+!backend/src/main/resources/schema.sql
+package-lock.json
