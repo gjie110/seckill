@@ -71,10 +71,12 @@ public class ProductService {
         stringRedisTemplate.delete(RedisKey.productListByChannelKey("info:null"));
     }
 
+    /** 查询所有已发布演出列表（按开售时间升序）。 */
     public List<SeckillProduct> listProducts() {
         return listProducts(null);
     }
 
+    /** 查询演出列表（含最低价、渠道等扩展信息），结果缓存 Redis。 */
     public List<Map<String, Object>> listProductsWithInfo(String channel) {
         String channelKey = (channel == null || channel.trim().isEmpty())
                 ? RedisKey.productListByChannelKey("info:null")
@@ -262,6 +264,7 @@ public class ProductService {
         return banners;
     }
 
+    /** 查询单个演出（含空值缓存防穿透）。 */
     public SeckillProduct getProduct(Long productId) {
         if (productId == null) {
             throw new SeckillException(ResultCode.PRODUCT_NOT_FOUND);
@@ -285,6 +288,7 @@ public class ProductService {
         return product;
     }
 
+    /** 查询演出所有已发布票种，结果缓存 Redis。 */
     public List<TicketType> getTicketTypes(Long productId) {
         if (productId == null) {
             return new ArrayList<>();
@@ -332,6 +336,7 @@ public class ProductService {
         return tt;
     }
 
+    /** 查询票种秒杀活动配置，结果缓存 Redis。 */
     public SeckillConfig getSeckillConfig(Long ticketTypeId) {
         if (ticketTypeId == null) {
             return null;
@@ -607,6 +612,7 @@ public class ProductService {
     }
 
     @Transactional
+    /** 管理员设置票种库存，同时更新 DB 和 Redis。 */
     public void setStock(Long ticketTypeId, Integer stock) {
         if (stock == null || stock < 0) {
             throw new SeckillException(ResultCode.PARAM_ERROR);
@@ -792,6 +798,7 @@ public class ProductService {
     }
 
     @Transactional
+    /** 管理员修改演出信息，不传的字段保持原值。 */
     public void updateProduct(Long productId, String name, String description, String venue,
                               Date showTime, String posterUrl, Integer status, Integer isBanner) {
         SeckillProduct product = getProduct(productId);
@@ -834,6 +841,7 @@ public class ProductService {
     }
 
     @Transactional
+    /** 管理员发布演出，预热已发布票种库存到 Redis。 */
     public void publishProduct(Long productId) {
         SeckillProduct product = getProduct(productId);
         product.setStatus(1);
@@ -876,6 +884,7 @@ public class ProductService {
     }
 
     @Transactional
+    /** 管理员修改票种信息（名称/区域/价格/渠道），不清缓存由外部显式处理。 */
     public void updateTicketType(Long ticketTypeId, String typeName, String seatArea,
                                  BigDecimal price, String channel) {
         TicketType tt = getTicketType(ticketTypeId);
@@ -982,6 +991,7 @@ public class ProductService {
         return res;
     }
 
+    /** 查询进行中/即将开始的秒杀/特价活动配置（含实时库存），结果缓存 Redis。 */
     public List<Map<String, Object>> listUpcomingSeckillConfigs() {
         String cached = stringRedisTemplate.opsForValue().get(RedisKey.UPCOMING_CONFIGS);
         if (cached != null && !CACHE_NULL.equals(cached)) {

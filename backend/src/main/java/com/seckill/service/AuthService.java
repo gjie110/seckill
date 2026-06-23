@@ -14,11 +14,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * 认证服务
- * 处理用户登录、权限校验等认证相关逻辑
- * 核心功能：用户名密码验证、角色区分（user/admin）
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -27,29 +22,15 @@ public class AuthService {
     private final UserMapper userMapper;
 
     /**
-     * 用户登录方法
-     *
-     * 功能描述：
-     * 1. 根据用户名从数据库查询用户信息
-     * 2. 验证用户是否存在
-     * 3. 验证账户状态（是否被禁用）
-     * 4. 验证密码是否正确（演示项目使用明文比较，实际项目应使用BCrypt加密）
-     * 5. 登录成功后更新最后登录时间
-     * 6. 返回用户基本信息和角色
-     *
-     * @param request 登录请求参数（用户名、密码）
-     * @return 登录成功返回用户信息，失败抛出异常
+     * 用户登录，支持用户名/手机号/邮箱登录，验证密码并返回用户信息及角色。
      */
     public LoginResponse login(LoginRequest request) {
-        // 参数校验
         if (request.getUsername() == null || request.getUsername().trim().isEmpty()) {
             throw new IllegalArgumentException("用户名不能为空");
         }
         if (request.getPassword() == null || request.getPassword().trim().isEmpty()) {
             throw new IllegalArgumentException("密码不能为空");
         }
-
-        // 1. 查询用户信息（支持用户名、手机号、邮箱登录）
         LambdaQueryWrapper<SeckillUser> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.and(w -> w.eq(SeckillUser::getUsername, request.getUsername().trim())
                 .or().eq(SeckillUser::getPhone, request.getUsername().trim())
@@ -60,73 +41,44 @@ public class AuthService {
             log.warn("登录失败：用户不存在 - {}", request.getUsername());
             throw new IllegalArgumentException("用户名或密码错误");
         }
-
-        // 2. 检查账户状态
         if (user.getStatus() != null && user.getStatus() == 1) {
             log.warn("登录失败：账户已禁用 - {}", request.getUsername());
             throw new IllegalArgumentException("账户已被禁用，请联系管理员");
         }
-
-        // 3. 密码验证（演示使用明文比较，实际项目应使用 BCryptPasswordEncoder）
         if (!request.getPassword().equals(user.getPassword())) {
             log.warn("登录失败：密码错误 - {}", request.getUsername());
             throw new IllegalArgumentException("用户名或密码错误");
         }
-
-        // 4. 更新最后登录时间
         SeckillUser updateUser = new SeckillUser();
         updateUser.setUserId(user.getUserId());
         updateUser.setLastLoginTime(new Date());
         userMapper.updateById(updateUser);
-
-        // 5. 生成简单的token（实际项目应使用JWT）
         String token = UUID.randomUUID().toString().replace("-", "");
-
         log.info("登录成功：用户={}, 角色={}", user.getUsername(), user.getRole());
-
-        // 6. 返回登录响应信息
-        return new LoginResponse(
-                user.getUserId(),
-                user.getUsername(),
-                user.getRole(),
-                token
-        );
+        return new LoginResponse(user.getUserId(), user.getUsername(), user.getRole(), token);
     }
 
-    /**
-     * 校验用户是否为管理员
-     *
-     * @param userId 用户ID
-     * @return true-管理员，false-普通用户
-     */
+    /** 判断指定用户是否为管理员。 */
     public boolean isAdmin(Long userId) {
         if (userId == null) return false;
         SeckillUser user = userMapper.selectById(userId);
         return user != null && "admin".equals(user.getRole());
     }
 
-    /**
-     * 获取用户角色
-     *
-     * @param userId 用户ID
-     * @return 角色：user/admin，用户不存在返回null
-     */
+    /** 获取指定用户的角色字符串。 */
     public String getUserRole(Long userId) {
         if (userId == null) return null;
         SeckillUser user = userMapper.selectById(userId);
         return user != null ? user.getRole() : null;
     }
 
-    /**
-     * 查询所有用户（管理员用）
-     */
+    /** 查询所有用户列表（按创建时间升序）。 */
     public List<SeckillUser> listAllUsers() {
-        return userMapper.selectList(
-            new LambdaQueryWrapper<SeckillUser>()
-                .orderByAsc(SeckillUser::getCreateTime)
-        );
+        return userMapper.selectList(new LambdaQueryWrapper<SeckillUser>()
+                .orderByAsc(SeckillUser::getCreateTime));
     }
 
+    /** 分页查询用户列表，支持按用户名/手机号/邮箱关键词搜索。 */
     public Page<SeckillUser> listUsersPage(String keyword, Integer page, Integer size) {
         LambdaQueryWrapper<SeckillUser> wrapper = new LambdaQueryWrapper<SeckillUser>();
         if (keyword != null && !keyword.trim().isEmpty()) {
@@ -136,43 +88,29 @@ public class AuthService {
                     .or().like(SeckillUser::getEmail, kw));
         }
         wrapper.orderByAsc(SeckillUser::getCreateTime);
-        Page<SeckillUser> pageRequest = new Page<>(page, size);
-        return userMapper.selectPage(pageRequest, wrapper);
+        return userMapper.selectPage(new Page<>(page, size), wrapper);
     }
 
-    /**
-     * 注册新用户（管理员用）
-     */
+    /** 管理员手动注册新用户，设置用户名、密码、角色。 */
     public void registerUser(String username, String password, String phone, String email, String role) {
-        if (username == null || username.trim().isEmpty()) {
-            throw new IllegalArgumentException("用户名不能为空");
-        }
-        if (password == null || password.trim().isEmpty()) {
-            throw new IllegalArgumentException("密码不能为空");
-        }
-        // 检查用户名是否已存在
+        if (username == null || username.trim().isEmpty()) throw new IllegalArgumentException("用户名不能为空");
+        if (password == null || password.trim().isEmpty()) throw new IllegalArgumentException("密码不能为空");
         SeckillUser existing = userMapper.selectByUsername(username.trim());
-        if (existing != null) {
-            throw new IllegalArgumentException("用户名已存在");
-        }
-        if (!"user".equals(role) && !"admin".equals(role)) {
-            role = "user";
-        }
+        if (existing != null) throw new IllegalArgumentException("用户名已存在");
+        if (!"user".equals(role) && !"admin".equals(role)) role = "user";
         SeckillUser user = new SeckillUser();
         user.setUsername(username.trim());
-        user.setPassword(password); // 明文存储（演示项目）
+        user.setPassword(password);
         user.setPhone(phone);
         user.setEmail(email);
         user.setRole(role);
-        user.setStatus(0); // 正常
+        user.setStatus(0);
         user.setCreateTime(new Date());
         userMapper.insert(user);
         log.info("[管理员] 新增用户：username={}, role={}", username, role);
     }
 
-    /**
-     * 设置用户状态（启用/禁用）
-     */
+    /** 启用或禁用用户账户（status=0正常，status=1禁用）。 */
     public void setUserStatus(Long userId, Integer status) {
         if (userId == null) return;
         SeckillUser user = userMapper.selectById(userId);
@@ -182,9 +120,7 @@ public class AuthService {
         log.info("[管理员] 设置用户状态：userId={}, status={}", userId, status);
     }
 
-    /**
-     * 设置用户角色
-     */
+    /** 修改用户角色，在普通用户和管理员之间切换。 */
     public void setUserRole(Long userId, String role) {
         if (userId == null || role == null) return;
         SeckillUser user = userMapper.selectById(userId);
@@ -194,9 +130,7 @@ public class AuthService {
         log.info("[管理员] 设置用户角色：userId={}, role={}", userId, role);
     }
 
-    /**
-     * 删除用户（物理删除）
-     */
+    /** 删除指定用户。 */
     public void deleteUser(Long userId) {
         if (userId == null) return;
         SeckillUser user = userMapper.selectById(userId);
@@ -205,21 +139,15 @@ public class AuthService {
         log.info("[管理员] 删除用户：userId={}, username={}", userId, user.getUsername());
     }
 
-    /**
-     * 修改用户基本信息（用户名、手机号、邮箱、密码）
-     * 不传的字段保持不变
-     */
+    /** 修改用户基本信息，不传的字段保持原值不变。 */
     public void updateUser(Long userId, String username, String phone, String email, String password) {
         if (userId == null) return;
         SeckillUser user = userMapper.selectById(userId);
         if (user == null) return;
         boolean changed = false;
         if (username != null && !username.trim().isEmpty() && !username.trim().equals(user.getUsername())) {
-            // 检查新用户名是否被占用（排除自己）
             SeckillUser exist = userMapper.selectByUsername(username.trim());
-            if (exist != null && !exist.getUserId().equals(userId)) {
-                throw new IllegalArgumentException("用户名已被使用");
-            }
+            if (exist != null && !exist.getUserId().equals(userId)) throw new IllegalArgumentException("用户名已被使用");
             user.setUsername(username.trim());
             changed = true;
         }

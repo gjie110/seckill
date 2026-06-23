@@ -43,22 +43,23 @@ public class OrderService {
     private final WaitlistService waitlistService;
     private final MessageService messageService;
 
+    /** 根据订单号查询订单。 */
     public SeckillOrder getOrder(String orderNo) {
         return orderMapper.selectOne(new LambdaQueryWrapper<SeckillOrder>()
                 .eq(SeckillOrder::getOrderNo, orderNo));
     }
 
+    /** 查询指定用户所有订单（按创建时间倒序）。 */
     public List<SeckillOrder> listOrders(Long userId) {
         return orderMapper.selectList(new LambdaQueryWrapper<SeckillOrder>()
                 .eq(SeckillOrder::getUserId, userId)
                 .orderByDesc(SeckillOrder::getCreateTime));
     }
 
+    /** 查询订单详情，组装用户、演出、票种等关联信息。 */
     public OrderDetailDTO getOrderDetail(String orderNo) {
         SeckillOrder order = getOrder(orderNo);
-        if (order == null) {
-            return null;
-        }
+        if (order == null) return null;
         OrderDetailDTO dto = new OrderDetailDTO();
         dto.setOrderId(order.getId());
         dto.setOrderNo(order.getOrderNo());
@@ -74,139 +75,82 @@ public class OrderService {
         dto.setTimeoutTime(order.getTimeoutTime());
         dto.setCreateTime(order.getCreateTime());
         dto.setUpdateTime(order.getUpdateTime());
-
         SeckillUser user = userMapper.selectById(order.getUserId());
-        if (user != null) {
-            dto.setUsername(user.getUsername());
-            dto.setPhone(user.getPhone());
-        }
-
+        if (user != null) { dto.setUsername(user.getUsername()); dto.setPhone(user.getPhone()); }
         SeckillProduct product = productMapper.selectById(order.getProductId());
-        if (product != null) {
-            dto.setProductName(product.getName());
-            dto.setVenue(product.getVenue());
-            dto.setShowTime(product.getShowTime());
-        }
-
+        if (product != null) { dto.setProductName(product.getName()); dto.setVenue(product.getVenue()); dto.setShowTime(product.getShowTime()); }
         TicketType ticket = ticketTypeMapper.selectById(order.getTicketTypeId());
-        if (ticket != null) {
-            dto.setTicketTypeName(ticket.getTypeName());
-            dto.setSeatArea(ticket.getSeatArea());
-        }
-
+        if (ticket != null) { dto.setTicketTypeName(ticket.getTypeName()); dto.setSeatArea(ticket.getSeatArea()); }
         return dto;
     }
 
+    /** 用户支付订单：验证状态 → 更新已支付 → 生成用户票。 */
     @Transactional
     public List<UserTicket> payOrder(String orderNo, Long userId) {
         SeckillOrder order = getOrder(orderNo);
-        if (order == null) {
-            throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
-        }
-        if (!order.getUserId().equals(userId)) {
-            throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
-        }
-        if (order.getStatus() == 1) {
-            throw new SeckillException(ResultCode.ORDER_PAID);
-        }
-        if (order.getStatus() == 2) {
-            throw new SeckillException(ResultCode.ORDER_CANCELLED);
-        }
-        if (order.getStatus() == 3 || new Date().after(order.getTimeoutTime())) {
-            throw new SeckillException(ResultCode.ORDER_TIMEOUT);
-        }
-
+        if (order == null) throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
+        if (!order.getUserId().equals(userId)) throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
+        if (order.getStatus() == 1) throw new SeckillException(ResultCode.ORDER_PAID);
+        if (order.getStatus() == 2) throw new SeckillException(ResultCode.ORDER_CANCELLED);
+        if (order.getStatus() == 3 || new Date().after(order.getTimeoutTime())) throw new SeckillException(ResultCode.ORDER_TIMEOUT);
         order.setStatus(1);
         order.setPayTime(new Date());
         order.setUpdateTime(new Date());
         orderMapper.updateById(order);
-
         TicketType ticketType = ticketTypeMapper.selectById(order.getTicketTypeId());
         List<UserTicket> tickets = userTicketService.generateTickets(order, ticketType);
-
-        try {
-            messageService.sendOrderPaidMsg(userId, orderNo, order.getTicketTypeId(), tickets.size());
-        } catch (Exception e) {
-            log.warn("发送支付成功消息失败，不影响主流程", e);
-        }
-
+        try { messageService.sendOrderPaidMsg(userId, orderNo, order.getTicketTypeId(), tickets.size()); } catch (Exception e) { log.warn("发送支付成功消息失败，不影响主流程", e); }
         log.info("订单支付成功：orderNo={}, 生成票{}张", orderNo, tickets.size());
         return tickets;
     }
 
+    /** 回滚 Redis 预扣库存和用户购买计数器（Lua 脚本降级）。 */
     private void rollbackStock(Long userId, Long ticketTypeId, Integer quantity) {
         String stockKey = RedisKey.stockKey(ticketTypeId);
         String userBoughtKey = RedisKey.userBoughtKey(userId, ticketTypeId);
         try {
-            stringRedisTemplate.execute(
-                    new DefaultRedisScript<>(RedisKey.STOCK_INCR_SCRIPT, Long.class),
-                    Arrays.asList(stockKey, userBoughtKey),
-                    String.valueOf(quantity)
-            );
+            stringRedisTemplate.execute(new DefaultRedisScript<>(RedisKey.STOCK_INCR_SCRIPT, Long.class),
+                    Arrays.asList(stockKey, userBoughtKey), String.valueOf(quantity));
         } catch (Exception e) {
             log.warn("STOCK_INCR_SCRIPT 执行异常，降级处理", e);
             stringRedisTemplate.opsForValue().increment(stockKey, quantity);
         }
     }
 
+    /** 用户取消未支付订单：更新状态 → 释放库存 → 通知候补。 */
     @Transactional
     public void cancelOrder(String orderNo, Long userId) {
         SeckillOrder order = getOrder(orderNo);
-        if (order == null) {
-            throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
-        }
-        if (!order.getUserId().equals(userId)) {
-            throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
-        }
-        if (order.getStatus() != 0) {
-            return;
-        }
-
+        if (order == null) throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
+        if (!order.getUserId().equals(userId)) throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
+        if (order.getStatus() != 0) return;
         order.setStatus(2);
         order.setUpdateTime(new Date());
         orderMapper.updateById(order);
-
         ticketTypeMapper.increaseStock(order.getTicketTypeId(), order.getQuantity());
-
         rollbackStock(userId, order.getTicketTypeId(), order.getQuantity());
-
         waitlistService.notifyWaitlist(order.getTicketTypeId(), order.getQuantity());
-
-        try {
-            messageService.sendOrderCancelledMsg(userId, orderNo, order.getTicketTypeId());
-        } catch (Exception e) {
-            log.warn("发送订单取消消息失败，不影响主流程", e);
-        }
-
+        try { messageService.sendOrderCancelledMsg(userId, orderNo, order.getTicketTypeId()); } catch (Exception e) { log.warn("发送订单取消消息失败，不影响主流程", e); }
         log.info("订单取消成功：orderNo={}, 释放库存{}", orderNo, order.getQuantity());
     }
 
+    /** 每分钟轮询一次超时未支付订单并自动取消，释放库存通知候补。 */
     @Scheduled(cron = "0 */1 * * * ?")
     @Transactional
     public void checkTimeoutOrders() {
         List<SeckillOrder> timeoutOrders = orderMapper.selectList(
                 new LambdaQueryWrapper<SeckillOrder>()
                         .eq(SeckillOrder::getStatus, 0)
-                        .lt(SeckillOrder::getTimeoutTime, new Date())
-        );
-
+                        .lt(SeckillOrder::getTimeoutTime, new Date()));
         for (SeckillOrder order : timeoutOrders) {
             try {
                 order.setStatus(3);
                 order.setUpdateTime(new Date());
                 orderMapper.updateById(order);
-
                 ticketTypeMapper.increaseStock(order.getTicketTypeId(), order.getQuantity());
                 rollbackStock(order.getUserId(), order.getTicketTypeId(), order.getQuantity());
-
                 waitlistService.notifyWaitlist(order.getTicketTypeId(), order.getQuantity());
-
-                try {
-                    messageService.sendOrderTimeoutMsg(order.getUserId(), order.getOrderNo(), order.getTicketTypeId());
-                } catch (Exception e) {
-                    log.warn("发送订单超时消息失败，不影响主流程", e);
-                }
-
+                try { messageService.sendOrderTimeoutMsg(order.getUserId(), order.getOrderNo(), order.getTicketTypeId()); } catch (Exception e) { log.warn("发送订单超时消息失败", e); }
                 log.info("超时订单自动取消：orderNo={}", order.getOrderNo());
             } catch (Exception e) {
                 log.error("处理超时订单失败：orderNo={}", order.getOrderNo(), e);
@@ -214,69 +158,54 @@ public class OrderService {
         }
     }
 
+    /** 查询所有订单（按创建时间倒序）。 */
     public List<SeckillOrder> listAllOrders() {
         return orderMapper.selectList(new LambdaQueryWrapper<SeckillOrder>()
                 .orderByDesc(SeckillOrder::getCreateTime));
     }
 
+    /** 搜索订单（按订单号或用户ID关键词，支持状态筛选）。 */
     public List<SeckillOrder> searchOrders(String keyword, Integer status) {
         LambdaQueryWrapper<SeckillOrder> wrapper = new LambdaQueryWrapper<SeckillOrder>();
         if (keyword != null && !keyword.trim().isEmpty()) {
             wrapper.and(w -> w.like(SeckillOrder::getOrderNo, keyword.trim())
                     .or().like(SeckillOrder::getUserId, keyword.trim()));
         }
-        if (status != null) {
-            wrapper.eq(SeckillOrder::getStatus, status);
-        }
+        if (status != null) wrapper.eq(SeckillOrder::getStatus, status);
         wrapper.orderByDesc(SeckillOrder::getCreateTime);
         return orderMapper.selectList(wrapper);
     }
 
+    /** 分页搜索订单（支持关键词和状态筛选）。 */
     public Page<SeckillOrder> searchOrdersPage(String keyword, Integer status, Integer page, Integer size) {
         LambdaQueryWrapper<SeckillOrder> wrapper = new LambdaQueryWrapper<SeckillOrder>();
         if (keyword != null && !keyword.trim().isEmpty()) {
             wrapper.and(w -> w.like(SeckillOrder::getOrderNo, keyword.trim())
                     .or().like(SeckillOrder::getUserId, keyword.trim()));
         }
-        if (status != null) {
-            wrapper.eq(SeckillOrder::getStatus, status);
-        }
+        if (status != null) wrapper.eq(SeckillOrder::getStatus, status);
         wrapper.orderByDesc(SeckillOrder::getCreateTime);
-        Page<SeckillOrder> pageRequest = new Page<>(page, size);
-        return orderMapper.selectPage(pageRequest, wrapper);
+        return orderMapper.selectPage(new Page<>(page, size), wrapper);
     }
 
+    /** 管理员强制取消订单（已支付则释放库存），并通知候补队列。 */
     @Transactional
     public void adminForceCancelOrder(String orderNo, String reason) {
         SeckillOrder order = getOrder(orderNo);
-        if (order == null) {
-            throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
-        }
-        if (order.getStatus() == 2 || order.getStatus() == 3) {
-            return;
-        }
-
+        if (order == null) throw new SeckillException(ResultCode.ORDER_NOT_FOUND);
+        if (order.getStatus() == 2 || order.getStatus() == 3) return;
         Integer oldStatus = order.getStatus();
         order.setStatus(2);
         order.setUpdateTime(new Date());
         orderMapper.updateById(order);
-
         if (oldStatus == 1) {
             ticketTypeMapper.increaseStock(order.getTicketTypeId(), order.getQuantity());
             rollbackStock(order.getUserId(), order.getTicketTypeId(), order.getQuantity());
         } else {
-            // 未支付被取消，同时释放库存与计数器
             rollbackStock(order.getUserId(), order.getTicketTypeId(), order.getQuantity());
         }
-
         waitlistService.notifyWaitlist(order.getTicketTypeId(), order.getQuantity());
-
-        try {
-            messageService.sendOrderCancelledMsg(order.getUserId(), orderNo, order.getTicketTypeId());
-        } catch (Exception e) {
-            log.warn("发送强制取消消息失败，不影响主流程", e);
-        }
-
+        try { messageService.sendOrderCancelledMsg(order.getUserId(), orderNo, order.getTicketTypeId()); } catch (Exception e) { log.warn("发送强制取消消息失败", e); }
         log.info("[管理员] 强制取消订单：orderNo={}, 原状态={}, 原因={}", orderNo, oldStatus, reason);
     }
 }

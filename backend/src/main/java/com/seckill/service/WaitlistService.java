@@ -28,42 +28,19 @@ public class WaitlistService {
     private final TicketTypeMapper ticketTypeMapper;
     private final ProductMapper productMapper;
 
-    /**
-     * 用户提交候补登记。
-     * 规则：
-     *   - userId / ticketTypeId 必须提供
-     *   - 票种必须存在且上架
-     *   - 同一用户对同一票种不允许重复进行中的候补
-     */
+    /** 用户登记候补：同一票种不允许重复候补，登记成功发送确认消息。 */
     public Waitlist joinWaitlist(Long userId, Long productId, Long ticketTypeId) {
-        if (userId == null) {
-            throw new SeckillException(ResultCode.PARAM_ERROR, "用户ID不能为空");
-        }
-        if (ticketTypeId == null) {
-            throw new SeckillException(ResultCode.PARAM_ERROR, "票种ID不能为空");
-        }
+        if (userId == null) throw new SeckillException(ResultCode.PARAM_ERROR, "用户ID不能为空");
+        if (ticketTypeId == null) throw new SeckillException(ResultCode.PARAM_ERROR, "票种ID不能为空");
         TicketType ticket = ticketTypeMapper.selectById(ticketTypeId);
-        if (ticket == null) {
-            throw new SeckillException(ResultCode.PARAM_ERROR, "票种不存在");
-        }
-        if (ticket.getStatus() == null || ticket.getStatus() != 1) {
-            throw new SeckillException(ResultCode.PARAM_ERROR, "该票种未上架");
-        }
-        if (productId == null) {
-            productId = ticket.getProductId();
-        }
-
+        if (ticket == null) throw new SeckillException(ResultCode.PARAM_ERROR, "票种不存在");
+        if (ticket.getStatus() == null || ticket.getStatus() != 1) throw new SeckillException(ResultCode.PARAM_ERROR, "该票种未上架");
+        if (productId == null) productId = ticket.getProductId();
         java.util.List<Waitlist> existingList = waitlistMapper.selectList(
                 new LambdaQueryWrapper<Waitlist>()
-                        .eq(Waitlist::getUserId, userId)
-                        .eq(Waitlist::getTicketTypeId, ticketTypeId)
-                        .in(Waitlist::getStatus, 0, 1)
-                        .last("LIMIT 1")
-        );
-        if (existingList != null && !existingList.isEmpty()) {
-            throw new SeckillException(ResultCode.PARAM_ERROR, "您已登记候补，无需重复提交");
-        }
-
+                        .eq(Waitlist::getUserId, userId).eq(Waitlist::getTicketTypeId, ticketTypeId)
+                        .in(Waitlist::getStatus, 0, 1).last("LIMIT 1"));
+        if (existingList != null && !existingList.isEmpty()) throw new SeckillException(ResultCode.PARAM_ERROR, "您已登记候补，无需重复提交");
         Waitlist w = new Waitlist();
         w.setUserId(userId);
         w.setProductId(productId);
@@ -73,7 +50,6 @@ public class WaitlistService {
         w.setCreateTime(new Date());
         w.setUpdateTime(new Date());
         waitlistMapper.insert(w);
-
         try {
             Message msg = new Message();
             msg.setUserId(userId);
@@ -84,14 +60,12 @@ public class WaitlistService {
             msg.setStatus(0);
             msg.setCreateTime(new Date());
             messageMapper.insert(msg);
-        } catch (Exception e) {
-            log.warn("发送候补成功通知失败，不影响主流程", e);
-        }
-
+        } catch (Exception e) { log.warn("发送候补成功通知失败，不影响主流程", e); }
         log.info("用户候补登记成功：userId={}, ticketTypeId={}", userId, ticketTypeId);
         return w;
     }
 
+    /** 库存释放时按候补顺序通知用户（先到先得），通知状态置为已通知。 */
     public void notifyWaitlist(Long ticketTypeId, Integer releaseCount) {
         int limit = (releaseCount == null || releaseCount < 1) ? 1 : releaseCount;
         List<Waitlist> waitlists = waitlistMapper.selectList(
@@ -99,28 +73,20 @@ public class WaitlistService {
                         .eq(Waitlist::getTicketTypeId, ticketTypeId)
                         .eq(Waitlist::getStatus, 0)
                         .orderByAsc(Waitlist::getCreateTime)
-                        .last("LIMIT " + limit)
-        );
-        if (waitlists.isEmpty()) {
-            return;
-        }
-
+                        .last("LIMIT " + limit));
+        if (waitlists.isEmpty()) return;
         TicketType ticketType = ticketTypeMapper.selectById(ticketTypeId);
         SeckillProduct product = (ticketType != null) ? productMapper.selectById(ticketType.getProductId()) : null;
         String productName = (product != null) ? product.getName() : "";
         String typeName = (ticketType != null) ? ticketType.getTypeName() : "演出票";
-
         String title = "🎫 您候补的【" + productName + "·" + typeName + "】有票了！";
-        String content = "有 " + releaseCount + " 张【" + typeName + "】刚刚释放出来，" +
-                "请尽快前往演出详情页下单（通知仅基于候补顺序，库存先到先得）。";
-
+        String content = "有 " + releaseCount + " 张【" + typeName + "】刚刚释放出来，请尽快前往演出详情页下单（先到先得）。";
         int notified = 0;
         for (Waitlist w : waitlists) {
             w.setStatus(1);
             w.setNotifyTime(new Date());
             w.setUpdateTime(new Date());
             waitlistMapper.updateById(w);
-
             Message msg = new Message();
             msg.setUserId(w.getUserId());
             msg.setType("waitlist_notify");
@@ -135,11 +101,10 @@ public class WaitlistService {
         log.info("候补通知发送完毕：ticketTypeId={}, 释放{}张, 通知{}人", ticketTypeId, releaseCount, notified);
     }
 
+    /** 查询用户所有候补记录（按时间倒序）。 */
     public List<Waitlist> listMyWaitlists(Long userId) {
-        return waitlistMapper.selectList(
-                new LambdaQueryWrapper<Waitlist>()
-                        .eq(Waitlist::getUserId, userId)
-                        .orderByDesc(Waitlist::getCreateTime)
-        );
+        return waitlistMapper.selectList(new LambdaQueryWrapper<Waitlist>()
+                .eq(Waitlist::getUserId, userId)
+                .orderByDesc(Waitlist::getCreateTime));
     }
 }

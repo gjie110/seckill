@@ -15,8 +15,6 @@ import com.seckill.service.WaitlistService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -35,20 +33,13 @@ public class OrderController {
 
     @Operation(
         summary = "创建订单",
-        description = "创建新订单，调用秒杀服务执行下单逻辑。" +
-                      "返回订单号供后续支付使用。" +
-                      "如果未指定用户ID，默认使用测试用户1001。"
+        description = "创建新订单，返回订单号供后续支付。"
     )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "订单创建成功，返回订单号"),
-        @ApiResponse(responseCode = "2001", description = "库存不足")
-    })
     @PostMapping("/create")
     public Result<String> createOrder(@org.springframework.web.bind.annotation.RequestBody SeckillRequest request) {
         if (request.getUserId() == null) {
             request.setUserId(1001L);
         }
-        // 身份证格式校验：15位或18位（最后一位可以是X/x）
         if (request.getIdCard() == null || !request.getIdCard().matches("(^[0-9]{15}$)|(^[0-9]{18}$)|(^[0-9]{17}[0-9Xx]$)")) {
             throw new SeckillException(ResultCode.PARAM_ERROR, "身份证格式不正确（需为15位或18位）");
         }
@@ -58,13 +49,8 @@ public class OrderController {
 
     @Operation(
         summary = "查询订单列表",
-        description = "根据用户ID查询该用户的所有订单。" +
-                      "返回订单列表，包括订单号、演出信息、票种信息、订单状态、创建时间等。" +
-                      "订单状态：0-待支付、1-已支付、2-已取消、3-已超时。"
+        description = "根据用户ID查询该用户的所有订单，含演出、票种、状态等信息。"
     )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "查询成功，返回订单列表")
-    })
     @GetMapping("/list")
     public Result<List<SeckillOrder>> orderList(
             @Parameter(description = "用户ID", required = true, example = "1001")
@@ -78,13 +64,8 @@ public class OrderController {
 
     @Operation(
         summary = "查询订单详情",
-        description = "根据订单号查询订单详细信息。" +
-                      "返回订单完整信息，包括演出信息、票种信息、价格、数量、订单状态、支付时间等。"
+        description = "根据订单号查询订单完整信息，含演出、票种、价格、状态等。"
     )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "查询成功，返回订单详情"),
-        @ApiResponse(responseCode = "3001", description = "订单不存在")
-    })
     @GetMapping("/{orderNo}")
     public Result<OrderDetailDTO> orderDetail(
             @Parameter(description = "订单号", required = true, example = "20260616123456789012")
@@ -98,18 +79,8 @@ public class OrderController {
 
     @Operation(
         summary = "支付订单",
-        description = "用户支付订单，完成购票。" +
-                      "验证订单状态必须是待支付(状态0)，更新订单状态为已支付(状态1)。" +
-                      "支付成功后生成用户票(UserTicket)，包含座位号、票号等信息。" +
-                      "返回购票成功信息和票的张数。"
+        description = "用户支付指定订单，完成购票。"
     )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "支付成功，返回票的张数"),
-        @ApiResponse(responseCode = "3001", description = "订单不存在"),
-        @ApiResponse(responseCode = "3002", description = "订单已超时，请重新下单"),
-        @ApiResponse(responseCode = "3003", description = "订单已支付"),
-        @ApiResponse(responseCode = "3004", description = "订单已取消")
-    })
     @PostMapping("/{orderNo}/pay")
     public Result<String> payOrder(
             @Parameter(description = "订单号", required = true, example = "20260616123456789012")
@@ -125,17 +96,8 @@ public class OrderController {
 
     @Operation(
         summary = "取消订单",
-        description = "用户取消未支付的订单。" +
-                      "验证订单状态必须是待支付(状态0)，更新订单状态为已取消(状态2)。" +
-                      "释放Redis预扣的库存，库存回滚后通知候补队列可能有票可用。" +
-                      "候补用户会收到消息通知。"
+        description = "用户取消未支付的订单，释放Redis预扣库存，通知候补队列。"
     )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "取消成功"),
-        @ApiResponse(responseCode = "3001", description = "订单不存在"),
-        @ApiResponse(responseCode = "3003", description = "订单已支付，无法取消"),
-        @ApiResponse(responseCode = "3004", description = "订单已取消")
-    })
     @PostMapping("/{orderNo}/cancel")
     public Result<String> cancelOrder(
             @Parameter(description = "订单号", required = true, example = "20260616123456789012")
@@ -151,13 +113,8 @@ public class OrderController {
 
     @Operation(
         summary = "查询我的票",
-        description = "查询用户已支付的所有票。" +
-                      "返回票的详细信息，包括票号、演出名称、票种名称、座位信息、票价、票状态等。" +
-                      "票状态：0-未使用、1-已使用、2-已退票。"
+        description = "查询用户已支付的所有票，含票号、演出、座位、票价、状态等。"
     )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "查询成功，返回票列表")
-    })
     @GetMapping("/tickets")
     public Result<List<UserTicket>> myTickets(
             @Parameter(description = "用户ID", required = true, example = "1001")
@@ -171,14 +128,8 @@ public class OrderController {
 
     @Operation(
         summary = "查询候补记录",
-        description = "查询用户的候补申请记录。" +
-                      "当票种库存不足时，用户可以申请候补，等待有票时通知。" +
-                      "候补状态：0-等待中、1-已通知、2-已购票、3-已失效。" +
-                      "当有用户退票或取消订单释放库存时，候补用户会收到通知。"
+        description = "查询用户的候补申请记录，退票释放库存时按顺序通知候补用户。"
     )
-    @ApiResponses(value = {
-        @ApiResponse(responseCode = "200", description = "查询成功，返回候补记录列表")
-    })
     @GetMapping("/waitlist")
     public Result<List<Waitlist>> myWaitlist(
             @Parameter(description = "用户ID", required = true, example = "1001")
@@ -191,16 +142,9 @@ public class OrderController {
     }
 
     @Operation(
-            summary = "用户自助退票",
-            description = "用户对自己未使用的票发起退票。" +
-                          "只有 状态=0(未使用) 的票才能退票。" +
-                          "退票成功后，库存自动释放，并可能通知候补用户。"
+        summary = "用户自助退票",
+        description = "用户对未使用状态的票发起退票，释放库存并通知候补用户。"
     )
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "退票成功"),
-            @ApiResponse(responseCode = "3001", description = "票不存在或不是当前用户的"),
-            @ApiResponse(responseCode = "3004", description = "该票已使用或已退票，不可再次退票")
-    })
     @PostMapping("/ticket/refund")
     public Result<String> refundTicket(
             @Parameter(description = "票号", required = true, example = "TKxxxxxxxxxxxx")

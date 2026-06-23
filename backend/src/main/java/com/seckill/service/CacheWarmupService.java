@@ -20,14 +20,12 @@ public class CacheWarmupService {
     private final StringRedisTemplate stringRedisTemplate;
     private final TicketTypeMapper ticketTypeMapper;
 
+    /** 系统启动时将所有已发布票种库存批量写入 Redis，避免冷启动穿透 DB。 */
     @PostConstruct
     public void warmup() {
         try {
             List<TicketType> types = ticketTypeMapper.selectList(
-                    new LambdaQueryWrapper<TicketType>()
-                            .eq(TicketType::getDeleted, 0)
-            );
-
+                    new LambdaQueryWrapper<TicketType>().eq(TicketType::getDeleted, 0));
             int published = 0;
             for (TicketType t : types) {
                 String key = RedisKey.stockKey(t.getId());
@@ -46,6 +44,7 @@ public class CacheWarmupService {
         }
     }
 
+    /** 单个票种发布/下架时更新其 Redis 库存缓存。 */
     public void warmupSingle(Long ticketTypeId) {
         if (ticketTypeId == null) return;
         TicketType t = ticketTypeMapper.selectById(ticketTypeId);

@@ -32,8 +32,7 @@ public class FileController {
 
     @Operation(
         summary = "上传图片",
-        description = "上传演出海报图片。支持 jpg/png/webp 格式，文件大小不超过 5MB。" +
-                      "上传后返回图片的访问 URL，前端可直接引用该 URL 展示图片。"
+        description = "上传演出海报图片，支持 jpg/png/webp 格式，不超过 5MB。"
     )
     @PostMapping("/upload")
     public Result<Map<String, String>> upload(@RequestParam("file") MultipartFile file) {

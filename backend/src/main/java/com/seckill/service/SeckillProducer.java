@@ -17,6 +17,7 @@ public class SeckillProducer {
     private final RocketMQTemplate rocketMQTemplate;
     private static final String TOPIC = "seckill-order-topic";
 
+    /** 将秒杀订单消息发送到 RocketMQ，供消费者异步处理入库。 */
     public void sendOrderMessage(SeckillMessage message) {
         String payload = JSON.toJSONString(message);
         Message<String> msg = MessageBuilder.withPayload(payload).build();
